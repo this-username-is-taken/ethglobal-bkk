@@ -63,17 +63,20 @@
             { id: 'Mantle', color: '#F90000' },
             { id: 'Blast', color: '#FCFF52' },
             { id: 'Linea', color: '#44F2CC' },
-            { id: 'World Chain', color: '#FF8A65' },
+            { id: 'worldcoin', color: '#FF8A65' }, // Changed from WorldChain to worldcoin
             { id: 'Zircuit', color: '#9C27B0' }
         ];
 
         async function fetchChainData(chainId) {
             try {
                 const response = await fetch(`https://api.llama.fi/v2/historicalChainTvl/${chainId}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
                 const data = await response.json();
                 return data.map(item => ({
                     date: formatDate(new Date(item.date * 1000)),
-                    tvl: item.tvl / 1e9 // Convert to billions
+                    tvl: Math.max(item.tvl / 1e6, 0.01) // Convert to millions and ensure minimum value
                 }));
             } catch (error) {
                 console.error(`Error fetching ${chainId} data:`, error);
@@ -89,8 +92,11 @@
             }).format(date);
         }
 
-        function formatBillions(value) {
-            return `$${value.toFixed(2)}B`;
+        function formatMillions(value) {
+            if (value >= 1000) {
+                return `$${(value/1000).toFixed(1)}B`;
+            }
+            return `$${value.toFixed(1)}M`;
         }
 
         async function initChart() {
@@ -99,15 +105,21 @@
             try {
                 // Fetch data for all chains
                 const chainData = await Promise.all(
-                    chains.map(async chain => ({
-                        ...chain,
-                        data: await fetchChainData(chain.id)
-                    }))
+                    chains.map(async chain => {
+                        const data = await fetchChainData(chain.id);
+                        return {
+                            ...chain,
+                            data: data
+                        };
+                    })
                 );
+
+                // Filter out chains with no data
+                const validChainData = chainData.filter(chain => chain.data.length > 0);
 
                 // Get unique dates across all chains
                 const allDates = new Set();
-                chainData.forEach(chain => {
+                validChainData.forEach(chain => {
                     chain.data.forEach(item => {
                         allDates.add(item.date);
                     });
@@ -121,7 +133,7 @@
                     type: 'line',
                     data: {
                         labels: sortedDates,
-                        datasets: chainData.map(chain => ({
+                        datasets: validChainData.map(chain => ({
                             label: chain.id,
                             data: sortedDates.map(date => {
                                 const dataPoint = chain.data.find(d => d.date === date);
@@ -154,7 +166,7 @@
                             },
                             tooltip: {
                                 callbacks: {
-                                    label: (context) => `${context.dataset.label}: ${formatBillions(context.raw || 0)}`
+                                    label: (context) => `${context.dataset.label}: ${formatMillions(context.raw || 0)}`
                                 }
                             }
                         },
@@ -168,9 +180,10 @@
                                 }
                             },
                             y: {
-                                beginAtZero: true,
+                                type: 'logarithmic',
+                                beginAtZero: false,
                                 ticks: {
-                                    callback: (value) => formatBillions(value)
+                                    callback: (value) => formatMillions(value)
                                 }
                             }
                         }
